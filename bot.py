@@ -12,7 +12,7 @@ from threading import Thread
 # ==========================================
 # 👇 CONFIGURATION 👇
 # ==========================================
-BOT_TOKEN = os.getenv('BOT_TOKEN')
+API_TOKEN = os.getenv('API_TOKEN')
 ADMIN_ID = os.getenv('ADMIN_ID')    # <--- Apna Chat ID dalo
 CHANNEL_USERNAME = '@errorkid_05' 
 # ==========================================
@@ -33,7 +33,7 @@ def keep_alive():
     t.start()
 
 # --- BOT SETUP ---
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(API_TOKEN)
 
 user_modes = {}
 user_files = {}
@@ -41,7 +41,7 @@ user_processing = {}
 DB_FILE = "users_db.txt"
 
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(API_TOKEN)
 
 # --- MEMORY ---
 user_modes = {}       # User kis mode me hai (Text/Voice)

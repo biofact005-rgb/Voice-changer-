@@ -12,11 +12,17 @@ from threading import Thread
 # ==========================================
 # 👇 CONFIGURATION 👇
 # ==========================================
-API_TOKEN = os.getenv('API_TOKEN')
-ADMIN_ID = os.getenv('ADMIN_ID')    # <--- Apna Chat ID dalo
-CHANNEL_USERNAME = '@errorkid_05' 
-# ==========================================
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+# Convert ADMIN_ID to int, otherwise comparison fails
+try:
+    ADMIN_ID = int(os.getenv('ADMIN_ID')) 
+except (TypeError, ValueError):
+    print("⚠️ Warning: ADMIN_ID not set or invalid.")
+    ADMIN_ID = 0
 
+CHANNEL_USERNAME = '@errorkid_05' 
+DB_FILE = "users_db.txt"
+# ==========================================
 
 # --- FAKE SERVER FOR RENDER ---
 app = Flask('')
@@ -33,22 +39,12 @@ def keep_alive():
     t.start()
 
 # --- BOT SETUP ---
-bot = telebot.TeleBot(API_TOKEN)
-
-user_modes = {}
-user_files = {}
-user_processing = {}
-DB_FILE = "users_db.txt"
-
-
-bot = telebot.TeleBot(API_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN)
 
 # --- MEMORY ---
-user_modes = {}       # User kis mode me hai (Text/Voice)
-user_files = {}       # User ki original file
-user_processing = {}  # 🔒 LOCK SYSTEM: Kaun abhi wait kar raha hai
-DB_FILE = "users_db.txt"
-
+user_modes = {}       # User current mode (Text/Voice)
+user_files = {}       # Paths to user's original audio
+user_processing = {}  # 🔒 LOCK SYSTEM
 print("🔥 Master Bot Online! Anti-Spam & Auto-Reconnect Active...")
 
 # --- DATABASE FUNCTIONS ---
@@ -66,6 +62,9 @@ def save_user(chat_id):
 
 # --- HELPER: CHECK SUBSCRIPTION ---
 def check_subscription(user_id):
+    # Admins bypass check
+    if user_id == ADMIN_ID:
+        return True
     try:
         member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
         if member.status in ['creator', 'administrator', 'member']:
@@ -73,7 +72,8 @@ def check_subscription(user_id):
         return False
     except Exception as e:
         print(f"Verification Error: {e}") 
-        return False 
+        # If bot is not admin in channel, allow user to proceed to avoid blockage
+        return True 
 
 def ask_for_join(chat_id):
     markup = types.InlineKeyboardMarkup()
@@ -104,7 +104,7 @@ def broadcast_msg(message):
             bot.send_message(uid, f"📢 **Announcement:**\n\n{msg}", parse_mode="Markdown")
             sent += 1
         except:
-            pass
+            pass # User blocked bot
 
     bot.edit_message_text(f"✅ Broadcast Sent to {sent} users.", message.chat.id, status.message_id)
 
@@ -188,6 +188,7 @@ def handle_text_input(message):
         wav = f"user_{chat_id}.wav"
 
         tts.save(mp3)
+        # Convert MP3 to WAV using FFmpeg
         subprocess.call(['ffmpeg', '-i', mp3, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
         if os.path.exists(mp3): os.remove(mp3)
@@ -228,6 +229,7 @@ def handle_audio_input(message):
         wav = f"user_{chat_id}.wav"
 
         with open(temp, 'wb') as f: f.write(downloaded)
+        # Convert input to WAV using FFmpeg
         subprocess.call(['ffmpeg', '-i', temp, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
         if os.path.exists(temp): os.remove(temp)
@@ -237,7 +239,7 @@ def handle_audio_input(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
-# --- HELPER: SHOW ALL 12 EFFECTS ---
+# --- HELPER: SHOW EFFECTS ---
 def show_effects(chat_id, msg_id):
     markup = types.InlineKeyboardMarkup(row_width=3)
     btns = [
@@ -267,31 +269,27 @@ def show_effects(chat_id, msg_id):
 def apply_effect(call):
     chat_id = call.message.chat.id
 
-    # Handle Back Button
     if call.data == 'back':
         if chat_id in user_files and os.path.exists(user_files[chat_id]):
             os.remove(user_files[chat_id])
             del user_files[chat_id]
         if chat_id in user_processing: 
-            del user_processing[chat_id] # Lock bhi hata do
+            del user_processing[chat_id]
         
         user_modes[chat_id] = None
         bot.delete_message(chat_id, call.message.message_id)
         start_command(call.message) 
         return
 
-    # 🔒 ANTI-SPAM LOCK CHECK 🔒
-    # Agar user pehle se koi process kar raha hai, to roko
+    # 🔒 LOCK CHECK
     if user_processing.get(chat_id, False) == True:
-        bot.answer_callback_query(call.id, "✋ Ruko! Pehle wala complete hone do!", show_alert=True)
+        bot.answer_callback_query(call.id, "✋ Ruko! Processing chal rahi hai...", show_alert=True)
         return
 
-    # Check Validity
     if chat_id not in user_files or not os.path.exists(user_files[chat_id]):
         bot.answer_callback_query(call.id, "❌ File expire ho gayi! /start dabao.")
         return
 
-    # 🔒 LOCK LAGAO
     user_processing[chat_id] = True
     
     bot.answer_callback_query(call.id, "✨ Applying Magic...")
@@ -311,9 +309,10 @@ def apply_effect(call):
         elif eff == 'chipmunk': sf.write(out, data, int(rate * 1.5))
         elif eff == 'monster': sf.write(out, data, int(rate * 0.6))
         elif eff == 'giant': sf.write(out, data, int(rate * 0.4))
-        elif eff == 'ghost': sf.write(out, data[::-1], rate)
-        elif eff == 'reverse': sf.write(out, data[::-1], int(rate * 1.2))
+        elif eff == 'ghost': sf.write(out, data[::-1], int(rate * 0.8)) # Slow Reverse
+        elif eff == 'reverse': sf.write(out, data[::-1], int(rate * 1.2)) # Fast Reverse
         elif eff == 'robot':
+            # Simplified robot effect
             if len(data.shape) > 1: sf.write(out, data[::2].repeat(2, axis=0), rate)
             else: sf.write(out, data[::2].repeat(2), rate)
         elif eff == 'radio':
@@ -335,15 +334,13 @@ def apply_effect(call):
         bot.answer_callback_query(call.id, "❌ Error creating effect!")
 
     finally:
-        # 🔓 LOCK HATAO (Chahe error aaye ya success ho)
         user_processing[chat_id] = False
 
 #  --- AUTO RESTART & KEEP ALIVE ---
 if __name__ == "__main__":
-    keep_alive()  # <--- YEH LINE ZAROORI HAI RENDER KE LIYE
+    keep_alive()
     while True:
         try:
-            print("🚀 Bot Started on Render...")
             bot.infinity_polling(timeout=10, long_polling_timeout=5)
         except Exception as e:
             print(f"⚠️ Connection Lost: {e}")

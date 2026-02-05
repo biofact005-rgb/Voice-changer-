@@ -1,0 +1,5 @@
+pyTelegramBotAPI
+gTTS
+soundfile
+numpy
+flask

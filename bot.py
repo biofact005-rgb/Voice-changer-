@@ -1,4 +1,4 @@
-import telebot
+    import telebot
 from telebot import types
 from gtts import gTTS
 import soundfile as sf
@@ -13,9 +13,8 @@ from threading import Thread
 # 👇 CONFIGURATION 👇
 # ==========================================
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-# Convert ADMIN_ID to int, otherwise comparison fails
 try:
-    ADMIN_ID = int(os.getenv('ADMIN_ID')) 
+    ADMIN_ID = int(os.getenv('ADMIN_ID', 0)) 
 except (TypeError, ValueError):
     print("⚠️ Warning: ADMIN_ID not set or invalid.")
     ADMIN_ID = 0
@@ -28,9 +27,7 @@ DB_FILE = "users_db.txt"
 user_modes = {}       # User current mode (Text/Voice)
 user_files = {}       # Paths to user's original audio
 user_processing = {}  # 🔒 LOCK SYSTEM
-user_temp_text = {}   # 👈 YEH NAYA ADD KARO (Text store karne ke liye)
-
-
+user_temp_text = {}   # Text store karne ke liye
 
 # --- FAKE SERVER FOR RENDER ---
 app = Flask('')
@@ -48,11 +45,6 @@ def keep_alive():
 
 # --- BOT SETUP ---
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# --- MEMORY ---
-user_modes = {}       # User current mode (Text/Voice)
-user_files = {}       # Paths to user's original audio
-user_processing = {}  # 🔒 LOCK SYSTEM
 print("🔥 Master Bot Online! Anti-Spam & Auto-Reconnect Active...")
 
 # --- DATABASE FUNCTIONS ---
@@ -70,7 +62,6 @@ def save_user(chat_id):
 
 # --- HELPER: CHECK SUBSCRIPTION ---
 def check_subscription(user_id):
-    # Admins bypass check
     if user_id == ADMIN_ID:
         return True
     try:
@@ -80,7 +71,6 @@ def check_subscription(user_id):
         return False
     except Exception as e:
         print(f"Verification Error: {e}") 
-        # If bot is not admin in channel, allow user to proceed to avoid blockage
         return True 
 
 def ask_for_join(chat_id):
@@ -91,7 +81,7 @@ def ask_for_join(chat_id):
     markup.add(btn_check)
     bot.send_message(chat_id, f"⚠️ **Access Denied!**\n\nIs Bot ko use karne ke liye hamara channel join karein:\n{CHANNEL_USERNAME}", reply_markup=markup, parse_mode="Markdown")
 
-# --- 1. ADMIN COMMANDS (Broadcast) ---
+# --- 1. ADMIN COMMANDS ---
 @bot.message_handler(commands=['broadcast'])
 def broadcast_msg(message):
     if message.chat.id != ADMIN_ID:
@@ -112,12 +102,9 @@ def broadcast_msg(message):
             bot.send_message(uid, f"📢 **Announcement:**\n\n{msg}", parse_mode="Markdown")
             sent += 1
         except:
-            pass # User blocked bot
+            pass 
 
     bot.edit_message_text(f"✅ Broadcast Sent to {sent} users.", message.chat.id, status.message_id)
-
-# ho?\n"bot.send_message(chat_id, welcome, reply_markup=markup, parse_mode="Markdown")
-
 
 # --- 2. MAIN MENU (/start) ---
 @bot.message_handler(commands=['start'])
@@ -125,7 +112,6 @@ def start_command(message):
     chat_id = message.chat.id
     save_user(chat_id)
 
-    # Reset Processing Lock
     if chat_id in user_processing:
         del user_processing[chat_id]
 
@@ -133,68 +119,34 @@ def start_command(message):
         ask_for_join(chat_id)
         return
 
-    # Inline Buttons (Grid Format)
     markup = types.InlineKeyboardMarkup(row_width=2)
     btn1 = types.InlineKeyboardButton("📝 Text to Audio", callback_data='mode_text')
     btn2 = types.InlineKeyboardButton("🎤 Voice Changer", callback_data='mode_voice')
     btn_dev = types.InlineKeyboardButton("👨‍💻 Developer", url='https://t.me/errorkid_05')
     btn_upd = types.InlineKeyboardButton("📠 System Updates", url='https://t.me/errorkid_05')
 
-    # Row width 2 hai, toh 2-2 karke aayenge
     markup.add(btn1, btn2)
     markup.add(btn_dev, btn_upd) 
 
-    # Aapki photo jaisa Caption Format
+    user_name = message.chat.first_name if message.chat.first_name else "User"
+
     caption = f"""🏆 <b>VOICE OSINT TERMINAL</b> 🏆
-<blockquote>
-👤 <b>User:</b> {message.from_user.first_name}
+
+<blockquote>👤 <b>User:</b> {user_name}
 🆔 <b>ID:</b> <code>{chat_id}</code>
 💰 <b>Balance:</b> ∞ Infinity
-👑 <b>Status:</b> Premium Access
-</blockquote>
+👑 <b>Status:</b> Premium Access</blockquote>
 <blockquote>💬 <b>SYSTEM READY.</b>
 Select a module below to generate or manipulate audio directly in the chat.</blockquote>"""
 
-    # Yahan apne image ka URL daal dena (ya local file path use kar lena)
-    # Maine abhi ek dummy aesthetic image link daal diya hai
-    IMAGE_URL = "https://graph.org/file/e5e284000b57ae81d91b3-090a8e1a5abec588b4.jpg" 
+    IMAGE_URL = "https://i.pinimg.com/736x/8f/a3/9b/8fa39b34ebcf0ec3decc8f16b208de3d.jpg" 
 
     try:
         bot.send_photo(chat_id, photo=IMAGE_URL, caption=caption, parse_mode="HTML", reply_markup=markup)
     except Exception as e:
-        # Agar photo link fail hota hai, toh normal message bhej dega
         bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup)
 
-
-
-
-
-# --- 3. CALLBACK HANDLERS ---
-@bot.callback_query_handler(func=lambda call: call.data in ['mode_text', 'mode_voice', 'check_join'])
-def set_mode_handler(call):
-    chat_id = call.message.chat.id
-
-    if call.data == 'check_join':
-        if check_subscription(chat_id):
-            bot.delete_message(chat_id, call.message.message_id)
-            start_command(call.message)
-        else:
-            bot.answer_callback_query(call.id, "❌ Aapne abhi tak join nahi kiya!", show_alert=True)
-        return
-
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔙 Back to Main Menu", callback_data='back'))
-
-    if call.data == 'mode_text':
-        user_modes[chat_id] = 'text'
-        msg = "📝 **Mode Selected: Text to Audio**\n\nAb apna **TEXT** likh kar bhejo.\n(Voice mat bhejna!)"
-    else:
-        user_modes[chat_id] = 'voice'
-        msg = "🎤 **Mode Selected: Voice Changer**\n\nAb apni **VOICE** record karke ya audio file bhejo.\n(Text mat likhna!)"
-    
-    bot.edit_message_text(msg, chat_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-
-# --- 4. INPUT HANDLING -
+# --- 3. INPUT HANDLING ---
 @bot.message_handler(content_types=['text'])
 def handle_text_input(message):
     chat_id = message.chat.id
@@ -212,18 +164,14 @@ def handle_text_input(message):
         bot.reply_to(message, "⚠️ Pehle /start dabakar mode select karein!")
         return
 
-    # Text ko memory me save kar liya
     user_temp_text[chat_id] = message.text
 
-    # Language selection buttons
     markup = types.InlineKeyboardMarkup(row_width=2)
     btn_hi = types.InlineKeyboardButton("🇮🇳 Hindi", callback_data='lang_hi')
     btn_en = types.InlineKeyboardButton("🇬🇧 English", callback_data='lang_en')
     markup.add(btn_hi, btn_en)
 
     bot.reply_to(message, "🌐 **Language Select karo:**\nKis language me audio banani hai?", reply_markup=markup, parse_mode="Markdown")
-
-
 
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_audio_input(message):
@@ -244,11 +192,7 @@ def handle_audio_input(message):
 
     msg = bot.reply_to(message, "⬇️ Downloading... ⏳")
     try:
-        if message.content_type == 'voice':
-            file_id = message.voice.file_id
-        else:
-            file_id = message.audio.file_id
-
+        file_id = message.voice.file_id if message.content_type == 'voice' else message.audio.file_id
         file_info = bot.get_file(file_id)
         downloaded = bot.download_file(file_info.file_path)
 
@@ -256,7 +200,6 @@ def handle_audio_input(message):
         wav = f"user_{chat_id}.wav"
 
         with open(temp, 'wb') as f: f.write(downloaded)
-        # Convert input to WAV using FFmpeg
         subprocess.call(['ffmpeg', '-i', temp, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
         if os.path.exists(temp): os.remove(temp)
@@ -266,7 +209,6 @@ def handle_audio_input(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
-# --- HELPER: SHOW EFFECTS ---
 def show_effects(chat_id, msg_id):
     markup = types.InlineKeyboardMarkup(row_width=3)
     btns = [
@@ -291,36 +233,99 @@ def show_effects(chat_id, msg_id):
     except:
         bot.send_message(chat_id, "✅ **Audio Ready!**\nAb Effect Select karo:", reply_markup=markup)
 
-# --- 5. APPLY EFFECTS (LOGIC) ---
-# --- 5. APPLY EFFECTS (LOGIC) ---
-@bot.callback_query_handler(func=lambda call: call.data not in ['mode_text', 'mode_voice', 'check_join', 'lang_hi', 'lang_en'])
-def apply_effect(call):
 
+# ==========================================
+# --- CALLBACK HANDLERS (ORDER MATTERS!) ---
+# ==========================================
+
+# 1. Main Menu Buttons
+@bot.callback_query_handler(func=lambda call: call.data in ['mode_text', 'mode_voice', 'check_join'])
+def set_mode_handler(call):
+    chat_id = call.message.chat.id
+    bot.answer_callback_query(call.id) # Stops the loading icon
+
+    if call.data == 'check_join':
+        if check_subscription(chat_id):
+            bot.delete_message(chat_id, call.message.message_id)
+            start_command(call.message)
+        else:
+            bot.answer_callback_query(call.id, "❌ Aapne abhi tak join nahi kiya!", show_alert=True)
+        return
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Back to Main Menu", callback_data='back'))
+
+    if call.data == 'mode_text':
+        user_modes[chat_id] = 'text'
+        msg = "📝 **Mode Selected: Text to Audio**\n\nAb apna **TEXT** likh kar bhejo.\n(Voice mat bhejna!)"
+    else:
+        user_modes[chat_id] = 'voice'
+        msg = "🎤 **Mode Selected: Voice Changer**\n\nAb apni **VOICE** record karke ya audio file bhejo.\n(Text mat likhna!)"
+    
+    bot.edit_message_text(msg, chat_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+
+# 2. Language Selection Buttons
+@bot.callback_query_handler(func=lambda call: call.data in ['lang_hi', 'lang_en'])
+def process_tts_language(call):
+    chat_id = call.message.chat.id
+    bot.answer_callback_query(call.id)
+    
+    if chat_id not in user_temp_text:
+        bot.answer_callback_query(call.id, "❌ Error: Text nahi mila. Phir se likho.", show_alert=True)
+        return
+
+    text = user_temp_text[chat_id]
+    lang = 'hi' if call.data == 'lang_hi' else 'en'
+
+    bot.edit_message_text("🗣️ Generating Audio... ⏳", chat_id, call.message.message_id)
+
+    try:
+        tts = gTTS(text=text, lang=lang)
+        mp3 = f"temp_{chat_id}.mp3"
+        wav = f"user_{chat_id}.wav"
+
+        tts.save(mp3)
+        subprocess.call(['ffmpeg', '-i', mp3, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+        if os.path.exists(mp3): os.remove(mp3)
+        user_files[chat_id] = wav
+        
+        del user_temp_text[chat_id] 
+        show_effects(chat_id, call.message.message_id)
+
+    except Exception as e:
+        bot.edit_message_text(f"❌ Error: {e}", chat_id, call.message.message_id)
+
+
+# 3. Apply Effects / Catch-all (This handles ALL remaining buttons)
+@bot.callback_query_handler(func=lambda call: True)
+def apply_effect(call):
     chat_id = call.message.chat.id
 
     if call.data == 'back':
+        bot.answer_callback_query(call.id)
         if chat_id in user_files and os.path.exists(user_files[chat_id]):
             os.remove(user_files[chat_id])
             del user_files[chat_id]
         if chat_id in user_processing: 
             del user_processing[chat_id]
+        if chat_id in user_temp_text:
+            del user_temp_text[chat_id]
         
         user_modes[chat_id] = None
         bot.delete_message(chat_id, call.message.message_id)
         start_command(call.message) 
         return
 
-    # 🔒 LOCK CHECK
     if user_processing.get(chat_id, False) == True:
         bot.answer_callback_query(call.id, "✋ Ruko! Processing chal rahi hai...", show_alert=True)
         return
 
     if chat_id not in user_files or not os.path.exists(user_files[chat_id]):
-        bot.answer_callback_query(call.id, "❌ File expire ho gayi! /start dabao.")
+        bot.answer_callback_query(call.id, "❌ File expire ho gayi! /start dabao.", show_alert=True)
         return
 
     user_processing[chat_id] = True
-    
     bot.answer_callback_query(call.id, "✨ Applying Magic...")
     bot.send_chat_action(chat_id, 'record_audio')
 
@@ -331,17 +336,15 @@ def apply_effect(call):
         data, rate = sf.read(inp)
         eff = call.data
 
-        # --- EFFECTS LOGIC ---
         if eff == 'girl': sf.write(out, data, int(rate * 1.3))
         elif eff == 'woman': sf.write(out, data, int(rate * 1.15))
         elif eff == 'kid': sf.write(out, data, int(rate * 1.25))
         elif eff == 'chipmunk': sf.write(out, data, int(rate * 1.5))
         elif eff == 'monster': sf.write(out, data, int(rate * 0.6))
         elif eff == 'giant': sf.write(out, data, int(rate * 0.4))
-        elif eff == 'ghost': sf.write(out, data[::-1], int(rate * 0.8)) # Slow Reverse
-        elif eff == 'reverse': sf.write(out, data[::-1], int(rate * 1.2)) # Fast Reverse
+        elif eff == 'ghost': sf.write(out, data[::-1], int(rate * 0.8)) 
+        elif eff == 'reverse': sf.write(out, data[::-1], int(rate * 1.2)) 
         elif eff == 'robot':
-            # Simplified robot effect
             if len(data.shape) > 1: sf.write(out, data[::2].repeat(2, axis=0), rate)
             else: sf.write(out, data[::2].repeat(2), rate)
         elif eff == 'radio':
@@ -360,49 +363,11 @@ def apply_effect(call):
 
     except Exception as e:
         print(f"Effect Error: {e}")
-        bot.answer_callback_query(call.id, "❌ Error creating effect!")
+        bot.answer_callback_query(call.id, "❌ Error creating effect!", show_alert=True)
 
     finally:
         user_processing[chat_id] = False
 
-@bot.callback_query_handler(func=lambda call: call.data in ['lang_hi', 'lang_en'])
-def process_tts_language(call):
-    chat_id = call.message.chat.id
-    
-    # Check if text exists in memory
-    if chat_id not in user_temp_text:
-        bot.answer_callback_query(call.id, "❌ Error: Text nahi mila. Phir se likho.", show_alert=True)
-        return
-
-    text = user_temp_text[chat_id]
-    lang = 'hi' if call.data == 'lang_hi' else 'en'
-
-    # Processing message update karna
-    bot.edit_message_text("🗣️ Generating Audio... ⏳", chat_id, call.message.message_id)
-
-    try:
-        tts = gTTS(text=text, lang=lang)
-        mp3 = f"temp_{chat_id}.mp3"
-        wav = f"user_{chat_id}.wav"
-
-        tts.save(mp3)
-        # Convert MP3 to WAV using FFmpeg
-        subprocess.call(['ffmpeg', '-i', mp3, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-
-        if os.path.exists(mp3): os.remove(mp3)
-        user_files[chat_id] = wav
-        
-        # Memory clear kar do taaki space bache
-        del user_temp_text[chat_id] 
-        
-        show_effects(chat_id, call.message.message_id)
-
-    except Exception as e:
-        bot.edit_message_text(f"❌ Error: {e}", chat_id, call.message.message_id)
-
-
-
-#  --- AUTO RESTART & KEEP ALIVE ---
 if __name__ == "__main__":
     keep_alive()
     while True:

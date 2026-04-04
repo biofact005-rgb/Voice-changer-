@@ -157,7 +157,7 @@ Select a module below to generate or manipulate audio directly in the chat.</blo
 
     # Yahan apne image ka URL daal dena (ya local file path use kar lena)
     # Maine abhi ek dummy aesthetic image link daal diya hai
-    IMAGE_URL = "https://i.pinimg.com/736x/8f/a3/9b/8fa39b34ebcf0ec3decc8f16b208de3d.jpg" 
+    IMAGE_URL = "https://graph.org/file/e5e284000b57ae81d91b3-090a8e1a5abec588b4.jpg" 
 
     try:
         bot.send_photo(chat_id, photo=IMAGE_URL, caption=caption, parse_mode="HTML", reply_markup=markup)
@@ -292,8 +292,10 @@ def show_effects(chat_id, msg_id):
         bot.send_message(chat_id, "✅ **Audio Ready!**\nAb Effect Select karo:", reply_markup=markup)
 
 # --- 5. APPLY EFFECTS (LOGIC) ---
-@bot.callback_query_handler(func=lambda call: call.data not in ['mode_text', 'mode_voice', 'check_join'])
+# --- 5. APPLY EFFECTS (LOGIC) ---
+@bot.callback_query_handler(func=lambda call: call.data not in ['mode_text', 'mode_voice', 'check_join', 'lang_hi', 'lang_en'])
 def apply_effect(call):
+
     chat_id = call.message.chat.id
 
     if call.data == 'back':

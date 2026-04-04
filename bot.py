@@ -24,6 +24,14 @@ CHANNEL_USERNAME = '@errorkid_05'
 DB_FILE = "users_db.txt"
 # ==========================================
 
+# --- MEMORY ---
+user_modes = {}       # User current mode (Text/Voice)
+user_files = {}       # Paths to user's original audio
+user_processing = {}  # 🔒 LOCK SYSTEM
+user_temp_text = {}   # 👈 YEH NAYA ADD KARO (Text store karne ke liye)
+
+
+
 # --- FAKE SERVER FOR RENDER ---
 app = Flask('')
 
@@ -108,6 +116,9 @@ def broadcast_msg(message):
 
     bot.edit_message_text(f"✅ Broadcast Sent to {sent} users.", message.chat.id, status.message_id)
 
+# ho?\n"bot.send_message(chat_id, welcome, reply_markup=markup, parse_mode="Markdown")
+
+
 # --- 2. MAIN MENU (/start) ---
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -122,21 +133,41 @@ def start_command(message):
         ask_for_join(chat_id)
         return
 
+    # Inline Buttons (Grid Format)
     markup = types.InlineKeyboardMarkup(row_width=2)
     btn1 = types.InlineKeyboardButton("📝 Text to Audio", callback_data='mode_text')
     btn2 = types.InlineKeyboardButton("🎤 Voice Changer", callback_data='mode_voice')
     btn_dev = types.InlineKeyboardButton("👨‍💻 Developer", url='https://t.me/errorkid_05')
+    btn_upd = types.InlineKeyboardButton("📠 System Updates", url='https://t.me/errorkid_05')
 
+    # Row width 2 hai, toh 2-2 karke aayenge
     markup.add(btn1, btn2)
-    markup.row(btn_dev)
+    markup.add(btn_dev, btn_upd) 
 
-    welcome = (
-        "👋 **Welcome to Voice Bot!**\n\n"
-        "Kya karna chahte ho?\n"
-        "🔹 **Text:** Likh ke audio banao.\n"
-        "🔹 **Voice:** Apni awaaz badlo."
-    )
-    bot.send_message(chat_id, welcome, reply_markup=markup, parse_mode="Markdown")
+    # Aapki photo jaisa Caption Format
+    caption = f"""🏆 <b>VOICE OSINT TERMINAL</b> 🏆
+<blockquote>
+👤 <b>User:</b> {message.from_user.first_name}
+🆔 <b>ID:</b> <code>{chat_id}</code>
+💰 <b>Balance:</b> ∞ Infinity
+👑 <b>Status:</b> Premium Access
+</blockquote>
+<blockquote>💬 <b>SYSTEM READY.</b>
+Select a module below to generate or manipulate audio directly in the chat.</blockquote>"""
+
+    # Yahan apne image ka URL daal dena (ya local file path use kar lena)
+    # Maine abhi ek dummy aesthetic image link daal diya hai
+    IMAGE_URL = "https://i.pinimg.com/736x/8f/a3/9b/8fa39b34ebcf0ec3decc8f16b208de3d.jpg" 
+
+    try:
+        bot.send_photo(chat_id, photo=IMAGE_URL, caption=caption, parse_mode="HTML", reply_markup=markup)
+    except Exception as e:
+        # Agar photo link fail hota hai, toh normal message bhej dega
+        bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup)
+
+
+
+
 
 # --- 3. CALLBACK HANDLERS ---
 @bot.callback_query_handler(func=lambda call: call.data in ['mode_text', 'mode_voice', 'check_join'])
@@ -163,7 +194,7 @@ def set_mode_handler(call):
     
     bot.edit_message_text(msg, chat_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
 
-# --- 4. INPUT HANDLING ---
+# --- 4. INPUT HANDLING -
 @bot.message_handler(content_types=['text'])
 def handle_text_input(message):
     chat_id = message.chat.id
@@ -181,22 +212,18 @@ def handle_text_input(message):
         bot.reply_to(message, "⚠️ Pehle /start dabakar mode select karein!")
         return
 
-    msg = bot.reply_to(message, "🗣️ Generating Audio... ⏳")
-    try:
-        tts = gTTS(text=message.text, lang='hi')
-        mp3 = f"temp_{chat_id}.mp3"
-        wav = f"user_{chat_id}.wav"
+    # Text ko memory me save kar liya
+    user_temp_text[chat_id] = message.text
 
-        tts.save(mp3)
-        # Convert MP3 to WAV using FFmpeg
-        subprocess.call(['ffmpeg', '-i', mp3, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    # Language selection buttons
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_hi = types.InlineKeyboardButton("🇮🇳 Hindi", callback_data='lang_hi')
+    btn_en = types.InlineKeyboardButton("🇬🇧 English", callback_data='lang_en')
+    markup.add(btn_hi, btn_en)
 
-        if os.path.exists(mp3): os.remove(mp3)
-        user_files[chat_id] = wav
-        show_effects(chat_id, msg.message_id)
+    bot.reply_to(message, "🌐 **Language Select karo:**\nKis language me audio banani hai?", reply_markup=markup, parse_mode="Markdown")
 
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
+
 
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_audio_input(message):
@@ -335,6 +362,43 @@ def apply_effect(call):
 
     finally:
         user_processing[chat_id] = False
+
+@bot.callback_query_handler(func=lambda call: call.data in ['lang_hi', 'lang_en'])
+def process_tts_language(call):
+    chat_id = call.message.chat.id
+    
+    # Check if text exists in memory
+    if chat_id not in user_temp_text:
+        bot.answer_callback_query(call.id, "❌ Error: Text nahi mila. Phir se likho.", show_alert=True)
+        return
+
+    text = user_temp_text[chat_id]
+    lang = 'hi' if call.data == 'lang_hi' else 'en'
+
+    # Processing message update karna
+    bot.edit_message_text("🗣️ Generating Audio... ⏳", chat_id, call.message.message_id)
+
+    try:
+        tts = gTTS(text=text, lang=lang)
+        mp3 = f"temp_{chat_id}.mp3"
+        wav = f"user_{chat_id}.wav"
+
+        tts.save(mp3)
+        # Convert MP3 to WAV using FFmpeg
+        subprocess.call(['ffmpeg', '-i', mp3, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+        if os.path.exists(mp3): os.remove(mp3)
+        user_files[chat_id] = wav
+        
+        # Memory clear kar do taaki space bache
+        del user_temp_text[chat_id] 
+        
+        show_effects(chat_id, call.message.message_id)
+
+    except Exception as e:
+        bot.edit_message_text(f"❌ Error: {e}", chat_id, call.message.message_id)
+
+
 
 #  --- AUTO RESTART & KEEP ALIVE ---
 if __name__ == "__main__":

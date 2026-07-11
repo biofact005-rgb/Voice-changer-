@@ -1,7 +1,5 @@
 import telebot
 from telebot import types
-import soundfile as sf
-import numpy as np
 import os
 import subprocess
 import time
@@ -10,18 +8,14 @@ import edge_tts
 from flask import Flask
 from threading import Thread
 
-# --- Nayi Premium Audio Library ---
-from pedalboard import Pedalboard, PitchShift, Reverb, Delay, Chorus, Distortion, HighpassFilter, LowpassFilter
-from pedalboard.io import AudioFile
-
 # ==========================================
 # 👇 CONFIGURATION 👇
 # ==========================================
-BOT_TOKEN = os.getenv('BOT_TOKEN') # Yahan apna token hardcode bhi kar sakte ho
+BOT_TOKEN = os.getenv('BOT_TOKEN') 
 try:
     ADMIN_ID = int(os.getenv('ADMIN_ID', 0)) 
 except (TypeError, ValueError):
-    print("⚠️ Warning: ADMIN_ID not set or invalid.")
+    print("⚠️ Warning: ADMIN_ID not set.")
     ADMIN_ID = 0
 
 CHANNEL_USERNAME = '@errorkid_05' 
@@ -50,9 +44,9 @@ def keep_alive():
 
 # --- BOT SETUP ---
 bot = telebot.TeleBot(BOT_TOKEN)
-print("🔥 Premium Bot Online! Edge-TTS & Pedalboard Active...")
+print("🔥 Premium Bot Online! FFmpeg Audio Engine Active...")
 
-# --- DATABASE & SUBSCRIPTION (Same as before) ---
+# --- DATABASE & SUBSCRIPTION ---
 def get_users():
     if not os.path.exists(DB_FILE): return []
     with open(DB_FILE, "r") as f: return [line.strip() for line in f.readlines()]
@@ -78,8 +72,7 @@ def ask_for_join(chat_id):
     markup.add(btn_join, btn_check)
     bot.send_message(chat_id, f"⚠️ **Access Denied!**\nPehle channel join karein:\n{CHANNEL_USERNAME}", reply_markup=markup, parse_mode="Markdown")
 
-
-# --- START COMMAND ---
+# --- COMMANDS ---
 @bot.message_handler(commands=['start'])
 def start_command(message):
     chat_id = message.chat.id
@@ -97,7 +90,6 @@ def start_command(message):
 
     user_name = message.chat.first_name or "User"
     caption = f"🏆 <b>PREMIUM VOICE OSINT</b> 🏆\n\n👤 <b>User:</b> {user_name}\n👑 <b>Status:</b> Premium Access\n\nSelect a module below:"
-    
     bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup)
 
 
@@ -112,7 +104,6 @@ def handle_text_input(message):
 
     user_temp_text[chat_id] = message.text
 
-    # Naye AI Voices ke buttons
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("👨🏽 Hindi Male", callback_data='hi-IN-MadhurNeural'),
@@ -121,7 +112,6 @@ def handle_text_input(message):
         types.InlineKeyboardButton("👩🏻 English Female", callback_data='en-US-AriaNeural')
     )
     bot.reply_to(message, "🌟 **Premium AI Voice Select karo:**", reply_markup=markup, parse_mode="Markdown")
-
 
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_audio_input(message):
@@ -137,11 +127,11 @@ def handle_audio_input(message):
         file_info = bot.get_file(file_id)
         downloaded = bot.download_file(file_info.file_path)
 
-        temp = f"temp_{chat_id}"
+        temp = f"temp_{chat_id}.ogg"
         wav = f"user_{chat_id}.wav"
 
         with open(temp, 'wb') as f: f.write(downloaded)
-        # Convert to standard WAV for Pedalboard
+        # Convert to WAV with 44100Hz
         subprocess.call(['ffmpeg', '-i', temp, '-ar', '44100', wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         if os.path.exists(temp): os.remove(temp)
         
@@ -165,24 +155,18 @@ def show_effects(chat_id, msg_id):
     ]
     markup.add(*btns)
     markup.row(types.InlineKeyboardButton("🔙 Menu", callback_data='back'))
-
     bot.edit_message_text("✅ **Studio Ready!**\nAb Pro Effect Select karo:", chat_id, msg_id, reply_markup=markup, parse_mode="Markdown")
 
-
-# ==========================================
 # --- CALLBACK HANDLERS ---
-# ==========================================
-
 @bot.callback_query_handler(func=lambda call: call.data in ['mode_text', 'mode_voice'])
 def set_mode_handler(call):
     chat_id = call.message.chat.id
     bot.answer_callback_query(call.id)
     user_modes[chat_id] = call.data.split('_')[1]
-    
     msg = "📝 **Text to Audio:** Text bhejo!" if user_modes[chat_id] == 'text' else "🎤 **Voice Changer:** Audio/Voice bhejo!"
     bot.edit_message_text(msg, chat_id, call.message.message_id, parse_mode="Markdown")
 
-# Edge-TTS Async Runner
+# Async Edge-TTS
 async def generate_edge_tts(text, voice_model, output_file):
     communicate = edge_tts.Communicate(text, voice_model)
     await communicate.save(output_file)
@@ -191,7 +175,6 @@ async def generate_edge_tts(text, voice_model, output_file):
 def process_ai_tts(call):
     chat_id = call.message.chat.id
     bot.answer_callback_query(call.id)
-    
     if chat_id not in user_temp_text:
         return bot.answer_callback_query(call.id, "❌ Text expired!", show_alert=True)
 
@@ -201,21 +184,23 @@ def process_ai_tts(call):
         mp3 = f"temp_{chat_id}.mp3"
         wav = f"user_{chat_id}.wav"
         
-        # Run async Edge-TTS
         asyncio.run(generate_edge_tts(user_temp_text[chat_id], call.data, mp3))
-        
-        # Convert to WAV
         subprocess.call(['ffmpeg', '-i', mp3, '-ar', '44100', wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
         if os.path.exists(mp3): os.remove(mp3)
         user_files[chat_id] = wav
         del user_temp_text[chat_id] 
         show_effects(chat_id, call.message.message_id)
-
     except Exception as e:
         bot.edit_message_text(f"❌ Error: {e}", chat_id, call.message.message_id)
 
-# Premium Effects (True Pitch Shifting)
+# FFmpeg Math Logic For True Pitch Shifting
+def get_pitch_filter(semitones):
+    r = 2 ** (semitones / 12.0)
+    new_rate = int(44100 * r)
+    atempo = 1.0 / r
+    return f"aresample=44100,asetrate={new_rate},atempo={atempo:.4f}"
+
 @bot.callback_query_handler(func=lambda call: True)
 def apply_effect(call):
     chat_id = call.message.chat.id
@@ -234,39 +219,27 @@ def apply_effect(call):
     out = f"out_{chat_id}.wav"
 
     try:
-        # Load audio with Pedalboard
-        with AudioFile(inp) as f:
-            audio = f.read(f.frames)
-            samplerate = f.samplerate
-
-        board = Pedalboard([])
         eff = call.data
+        filters = ""
 
-        # 🎛️ TRUE PITCH SHIFTING (Speed remains constant!)
-        if eff == 'girl': board.append(PitchShift(semitones=4))
-        elif eff == 'woman': board.append(PitchShift(semitones=2))
-        elif eff == 'kid': board.append(PitchShift(semitones=7))
-        elif eff == 'monster': 
-            board.append(PitchShift(semitones=-6))
-            board.append(Distortion(drive_db=5))
-        elif eff == 'giant': 
-            board.append(PitchShift(semitones=-4))
-            board.append(Reverb(room_size=0.8, damping=0.9))
-        elif eff == 'alien':
-            board.append(PitchShift(semitones=3))
-            board.append(Chorus(rate_hz=2.0, depth=0.5))
-        elif eff == 'echo': board.append(Delay(delay_seconds=0.3, feedback=0.4))
-        elif eff == 'concert': board.append(Reverb(room_size=1.0, damping=0.1, wet_level=0.5))
-        elif eff == 'radio':
-            board.append(HighpassFilter(cutoff_frequency_hz=800))
-            board.append(LowpassFilter(cutoff_frequency_hz=2500))
-            board.append(Distortion(drive_db=8))
+        # 🎛️ FFMPEG AUDIO EFFECTS (Super Fast, No Crashes)
+        if eff == 'girl': filters = get_pitch_filter(4)
+        elif eff == 'woman': filters = get_pitch_filter(2)
+        elif eff == 'kid': filters = get_pitch_filter(7)
+        elif eff == 'monster': filters = get_pitch_filter(-6) + ",aecho=0.8:0.9:50:0.2"
+        elif eff == 'giant': filters = get_pitch_filter(-4) + ",aecho=0.8:0.9:1000:0.3"
+        elif eff == 'alien': filters = get_pitch_filter(3) + ",chorus=0.5:0.9:50|60:0.4|0.32:0.25|0.4:2|2.3"
+        elif eff == 'echo': filters = "aecho=0.8:0.9:500:0.4"
+        elif eff == 'concert': filters = "aecho=0.8:0.9:1000|1800:0.3|0.25"
+        elif eff == 'radio': filters = "highpass=f=600,lowpass=f=3000,volume=1.5"
 
-        # Apply magic!
-        effected = board(audio, samplerate)
-
-        with AudioFile(out, 'w', samplerate, effected.shape[0]) as f:
-            f.write(effected)
+        if filters:
+            cmd = ['ffmpeg', '-i', inp, '-filter:a', filters, '-y', out]
+        else:
+            cmd = ['ffmpeg', '-i', inp, '-y', out]
+        
+        # Audio process execute karna
+        subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
         with open(out, 'rb') as final_audio:
             bot.send_voice(chat_id, final_audio, caption=f"✨ Studio Effect: {eff.upper()}")

@@ -1,5 +1,6 @@
 pyTelegramBotAPI
-gTTS
+edge-tts
 soundfile
 numpy
 flask
+pedalboard

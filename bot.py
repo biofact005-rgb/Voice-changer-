@@ -1,18 +1,23 @@
 import telebot
 from telebot import types
-from gtts import gTTS
 import soundfile as sf
 import numpy as np
 import os
 import subprocess
 import time
+import asyncio
+import edge_tts
 from flask import Flask
 from threading import Thread
+
+# --- Nayi Premium Audio Library ---
+from pedalboard import Pedalboard, PitchShift, Reverb, Delay, Chorus, Distortion, HighpassFilter, LowpassFilter
+from pedalboard.io import AudioFile
 
 # ==========================================
 # 👇 CONFIGURATION 👇
 # ==========================================
-BOT_TOKEN = os.getenv('BOT_TOKEN')
+BOT_TOKEN = os.getenv('BOT_TOKEN') # Yahan apna token hardcode bhi kar sakte ho
 try:
     ADMIN_ID = int(os.getenv('ADMIN_ID', 0)) 
 except (TypeError, ValueError):
@@ -24,17 +29,17 @@ DB_FILE = "users_db.txt"
 # ==========================================
 
 # --- MEMORY ---
-user_modes = {}       # User current mode (Text/Voice)
-user_files = {}       # Paths to user's original audio
-user_processing = {}  # 🔒 LOCK SYSTEM
-user_temp_text = {}   # Text store karne ke liye
+user_modes = {}       
+user_files = {}       
+user_processing = {}  
+user_temp_text = {}   
 
 # --- FAKE SERVER FOR RENDER ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "I am alive"
+    return "Premium Voice Bot is alive!"
 
 def run_http():
     app.run(host='0.0.0.0', port=8080)
@@ -45,152 +50,88 @@ def keep_alive():
 
 # --- BOT SETUP ---
 bot = telebot.TeleBot(BOT_TOKEN)
-print("🔥 Master Bot Online! Anti-Spam & Auto-Reconnect Active...")
+print("🔥 Premium Bot Online! Edge-TTS & Pedalboard Active...")
 
-# --- DATABASE FUNCTIONS ---
+# --- DATABASE & SUBSCRIPTION (Same as before) ---
 def get_users():
-    if not os.path.exists(DB_FILE):
-        return []
-    with open(DB_FILE, "r") as f:
-        return [line.strip() for line in f.readlines()]
+    if not os.path.exists(DB_FILE): return []
+    with open(DB_FILE, "r") as f: return [line.strip() for line in f.readlines()]
 
 def save_user(chat_id):
     users = get_users()
     if str(chat_id) not in users:
-        with open(DB_FILE, "a") as f:
-            f.write(f"{chat_id}\n")
+        with open(DB_FILE, "a") as f: f.write(f"{chat_id}\n")
 
-# --- HELPER: CHECK SUBSCRIPTION ---
 def check_subscription(user_id):
-    if user_id == ADMIN_ID:
-        return True
+    if user_id == ADMIN_ID: return True
     try:
         member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        if member.status in ['creator', 'administrator', 'member']:
-            return True
+        if member.status in ['creator', 'administrator', 'member']: return True
         return False
-    except Exception as e:
-        print(f"Verification Error: {e}") 
+    except:
         return True 
 
 def ask_for_join(chat_id):
     markup = types.InlineKeyboardMarkup()
     btn_join = types.InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")
     btn_check = types.InlineKeyboardButton("✅ Joined", callback_data='check_join')
-    markup.add(btn_join)
-    markup.add(btn_check)
-    bot.send_message(chat_id, f"⚠️ **Access Denied!**\n\nIs Bot ko use karne ke liye hamara channel join karein:\n{CHANNEL_USERNAME}", reply_markup=markup, parse_mode="Markdown")
+    markup.add(btn_join, btn_check)
+    bot.send_message(chat_id, f"⚠️ **Access Denied!**\nPehle channel join karein:\n{CHANNEL_USERNAME}", reply_markup=markup, parse_mode="Markdown")
 
-# --- 1. ADMIN COMMANDS ---
-@bot.message_handler(commands=['broadcast'])
-def broadcast_msg(message):
-    if message.chat.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Aap Admin nahi ho!")
-        return
 
-    msg = message.text.replace("/broadcast", "").strip()
-    if not msg:
-        bot.reply_to(message, "Message likho! Ex: `/broadcast Hello`")
-        return
-
-    users = get_users()
-    sent = 0
-    status = bot.reply_to(message, f"📢 Sending to {len(users)} users...")
-
-    for uid in users:
-        try:
-            bot.send_message(uid, f"📢 **Announcement:**\n\n{msg}", parse_mode="Markdown")
-            sent += 1
-        except:
-            pass 
-
-    bot.edit_message_text(f"✅ Broadcast Sent to {sent} users.", message.chat.id, status.message_id)
-
-# --- 2. MAIN MENU (/start) ---
+# --- START COMMAND ---
 @bot.message_handler(commands=['start'])
 def start_command(message):
     chat_id = message.chat.id
     save_user(chat_id)
 
-    if chat_id in user_processing:
-        del user_processing[chat_id]
-
+    if chat_id in user_processing: del user_processing[chat_id]
     if not check_subscription(chat_id):
         ask_for_join(chat_id)
         return
 
     markup = types.InlineKeyboardMarkup(row_width=2)
-    btn1 = types.InlineKeyboardButton("📝 Text to Audio", callback_data='mode_text')
-    btn2 = types.InlineKeyboardButton("🎤 Voice Changer", callback_data='mode_voice')
-    btn_dev = types.InlineKeyboardButton("👨‍💻 Developer", url='https://t.me/errorkid_05')
-    btn_upd = types.InlineKeyboardButton("📠 System Updates", url='https://t.me/errorkid_05')
-
+    btn1 = types.InlineKeyboardButton("📝 Text to Audio (AI)", callback_data='mode_text')
+    btn2 = types.InlineKeyboardButton("🎤 Voice Changer (Pro)", callback_data='mode_voice')
     markup.add(btn1, btn2)
-    markup.add(btn_dev, btn_upd) 
 
-    user_name = message.chat.first_name if message.chat.first_name else "User"
+    user_name = message.chat.first_name or "User"
+    caption = f"🏆 <b>PREMIUM VOICE OSINT</b> 🏆\n\n👤 <b>User:</b> {user_name}\n👑 <b>Status:</b> Premium Access\n\nSelect a module below:"
+    
+    bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup)
 
-    caption = f"""🏆 <b>VOICE OSINT TERMINAL</b> 🏆
 
-<blockquote>👤 <b>User:</b> {user_name}
-🆔 <b>ID:</b> <code>{chat_id}</code>
-💰 <b>Balance:</b> ∞ Infinity
-👑 <b>Status:</b> Premium Access</blockquote>
-<blockquote>💬 <b>SYSTEM READY.</b>
-Select a module below to generate or manipulate audio directly in the chat.</blockquote>"""
-
-    IMAGE_URL = "https://i.pinimg.com/736x/8f/a3/9b/8fa39b34ebcf0ec3decc8f16b208de3d.jpg" 
-
-    try:
-        bot.send_photo(chat_id, photo=IMAGE_URL, caption=caption, parse_mode="HTML", reply_markup=markup)
-    except Exception as e:
-        bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup)
-
-# --- 3. INPUT HANDLING ---
+# --- INPUT HANDLING ---
 @bot.message_handler(content_types=['text'])
 def handle_text_input(message):
     chat_id = message.chat.id
-
-    if not check_subscription(chat_id):
-        ask_for_join(chat_id)
-        return
+    if not check_subscription(chat_id): return ask_for_join(chat_id)
     
-    current_mode = user_modes.get(chat_id)
-
-    if current_mode == 'voice':
-        bot.reply_to(message, "❌ **Wrong Input!**\nVoice Changer mode hai. Audio bhejo.")
-        return
-    elif current_mode != 'text':
-        bot.reply_to(message, "⚠️ Pehle /start dabakar mode select karein!")
-        return
+    if user_modes.get(chat_id) != 'text':
+        return bot.reply_to(message, "⚠️ Pehle /start dabakar 'Text to Audio' mode select karein!")
 
     user_temp_text[chat_id] = message.text
 
+    # Naye AI Voices ke buttons
     markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_hi = types.InlineKeyboardButton("🇮🇳 Hindi", callback_data='lang_hi')
-    btn_en = types.InlineKeyboardButton("🇬🇧 English", callback_data='lang_en')
-    markup.add(btn_hi, btn_en)
+    markup.add(
+        types.InlineKeyboardButton("👨🏽 Hindi Male", callback_data='hi-IN-MadhurNeural'),
+        types.InlineKeyboardButton("👩🏽 Hindi Female", callback_data='hi-IN-SwaraNeural'),
+        types.InlineKeyboardButton("👨🏻 English Male", callback_data='en-US-GuyNeural'),
+        types.InlineKeyboardButton("👩🏻 English Female", callback_data='en-US-AriaNeural')
+    )
+    bot.reply_to(message, "🌟 **Premium AI Voice Select karo:**", reply_markup=markup, parse_mode="Markdown")
 
-    bot.reply_to(message, "🌐 **Language Select karo:**\nKis language me audio banani hai?", reply_markup=markup, parse_mode="Markdown")
 
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_audio_input(message):
     chat_id = message.chat.id
+    if not check_subscription(chat_id): return ask_for_join(chat_id)
 
-    if not check_subscription(chat_id):
-        ask_for_join(chat_id)
-        return
+    if user_modes.get(chat_id) != 'voice':
+        return bot.reply_to(message, "⚠️ Pehle /start dabakar 'Voice Changer' mode select karein!")
 
-    current_mode = user_modes.get(chat_id)
-
-    if current_mode == 'text':
-        bot.reply_to(message, "❌ **Wrong Input!**\nText Mode hai. Text likho.")
-        return
-    elif current_mode != 'voice':
-        bot.reply_to(message, "⚠️ Pehle /start dabakar mode select karein!")
-        return
-
-    msg = bot.reply_to(message, "⬇️ Downloading... ⏳")
+    msg = bot.reply_to(message, "⬇️ Downloading & Processing... ⏳")
     try:
         file_id = message.voice.file_id if message.content_type == 'voice' else message.audio.file_id
         file_info = bot.get_file(file_id)
@@ -200,12 +141,12 @@ def handle_audio_input(message):
         wav = f"user_{chat_id}.wav"
 
         with open(temp, 'wb') as f: f.write(downloaded)
-        subprocess.call(['ffmpeg', '-i', temp, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-
+        # Convert to standard WAV for Pedalboard
+        subprocess.call(['ffmpeg', '-i', temp, '-ar', '44100', wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         if os.path.exists(temp): os.remove(temp)
+        
         user_files[chat_id] = wav
         show_effects(chat_id, msg.message_id)
-
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
@@ -215,164 +156,128 @@ def show_effects(chat_id, msg_id):
         types.InlineKeyboardButton("👩 Girl", callback_data='girl'),
         types.InlineKeyboardButton("👩‍🦰 Woman", callback_data='woman'),
         types.InlineKeyboardButton("👶 Kid", callback_data='kid'),
-        types.InlineKeyboardButton("🐿️ Chipmunk", callback_data='chipmunk'),
         types.InlineKeyboardButton("👹 Monster", callback_data='monster'),
         types.InlineKeyboardButton("🦍 Giant", callback_data='giant'),
-        types.InlineKeyboardButton("👻 Ghost", callback_data='ghost'),
         types.InlineKeyboardButton("👽 Alien", callback_data='alien'),
-        types.InlineKeyboardButton("🤖 Robot", callback_data='robot'),
-        types.InlineKeyboardButton("📢 Echo", callback_data='echo'),
-        types.InlineKeyboardButton("📻 Radio", callback_data='radio'),
-        types.InlineKeyboardButton("🔄 Reverse", callback_data='reverse')
+        types.InlineKeyboardButton("📢 Echo Studio", callback_data='echo'),
+        types.InlineKeyboardButton("📻 Walkie-Talkie", callback_data='radio'),
+        types.InlineKeyboardButton("🎤 Concert", callback_data='concert')
     ]
     markup.add(*btns)
-    markup.row(types.InlineKeyboardButton("🔙 Back to Main Menu", callback_data='back'))
+    markup.row(types.InlineKeyboardButton("🔙 Menu", callback_data='back'))
 
-    try:
-        bot.edit_message_text("✅ **Audio Ready!**\nAb Effect Select karo:", chat_id, msg_id, reply_markup=markup, parse_mode="Markdown")
-    except:
-        bot.send_message(chat_id, "✅ **Audio Ready!**\nAb Effect Select karo:", reply_markup=markup)
+    bot.edit_message_text("✅ **Studio Ready!**\nAb Pro Effect Select karo:", chat_id, msg_id, reply_markup=markup, parse_mode="Markdown")
 
 
 # ==========================================
-# --- CALLBACK HANDLERS (ORDER MATTERS!) ---
+# --- CALLBACK HANDLERS ---
 # ==========================================
 
-# 1. Main Menu Buttons
-@bot.callback_query_handler(func=lambda call: call.data in ['mode_text', 'mode_voice', 'check_join'])
+@bot.callback_query_handler(func=lambda call: call.data in ['mode_text', 'mode_voice'])
 def set_mode_handler(call):
     chat_id = call.message.chat.id
-    bot.answer_callback_query(call.id) # Stops the loading icon
-
-    if call.data == 'check_join':
-        if check_subscription(chat_id):
-            bot.delete_message(chat_id, call.message.message_id)
-            start_command(call.message)
-        else:
-            bot.answer_callback_query(call.id, "❌ Aapne abhi tak join nahi kiya!", show_alert=True)
-        return
-
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔙 Back to Main Menu", callback_data='back'))
-
-    if call.data == 'mode_text':
-        user_modes[chat_id] = 'text'
-        msg = "📝 **Mode Selected: Text to Audio**\n\nAb apna **TEXT** likh kar bhejo.\n(Voice mat bhejna!)"
-    else:
-        user_modes[chat_id] = 'voice'
-        msg = "🎤 **Mode Selected: Voice Changer**\n\nAb apni **VOICE** record karke ya audio file bhejo.\n(Text mat likhna!)"
+    bot.answer_callback_query(call.id)
+    user_modes[chat_id] = call.data.split('_')[1]
     
-    bot.edit_message_text(msg, chat_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+    msg = "📝 **Text to Audio:** Text bhejo!" if user_modes[chat_id] == 'text' else "🎤 **Voice Changer:** Audio/Voice bhejo!"
+    bot.edit_message_text(msg, chat_id, call.message.message_id, parse_mode="Markdown")
 
-# 2. Language Selection Buttons
-@bot.callback_query_handler(func=lambda call: call.data in ['lang_hi', 'lang_en'])
-def process_tts_language(call):
+# Edge-TTS Async Runner
+async def generate_edge_tts(text, voice_model, output_file):
+    communicate = edge_tts.Communicate(text, voice_model)
+    await communicate.save(output_file)
+
+@bot.callback_query_handler(func=lambda call: 'Neural' in call.data)
+def process_ai_tts(call):
     chat_id = call.message.chat.id
     bot.answer_callback_query(call.id)
     
     if chat_id not in user_temp_text:
-        bot.answer_callback_query(call.id, "❌ Error: Text nahi mila. Phir se likho.", show_alert=True)
-        return
+        return bot.answer_callback_query(call.id, "❌ Text expired!", show_alert=True)
 
-    text = user_temp_text[chat_id]
-    lang = 'hi' if call.data == 'lang_hi' else 'en'
-
-    bot.edit_message_text("🗣️ Generating Audio... ⏳", chat_id, call.message.message_id)
+    bot.edit_message_text("🗣️ Generating Studio Quality AI Voice... ⏳", chat_id, call.message.message_id)
 
     try:
-        tts = gTTS(text=text, lang=lang)
         mp3 = f"temp_{chat_id}.mp3"
         wav = f"user_{chat_id}.wav"
-
-        tts.save(mp3)
-        subprocess.call(['ffmpeg', '-i', mp3, wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        
+        # Run async Edge-TTS
+        asyncio.run(generate_edge_tts(user_temp_text[chat_id], call.data, mp3))
+        
+        # Convert to WAV
+        subprocess.call(['ffmpeg', '-i', mp3, '-ar', '44100', wav, '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
         if os.path.exists(mp3): os.remove(mp3)
         user_files[chat_id] = wav
-        
         del user_temp_text[chat_id] 
         show_effects(chat_id, call.message.message_id)
 
     except Exception as e:
         bot.edit_message_text(f"❌ Error: {e}", chat_id, call.message.message_id)
 
-
-# 3. Apply Effects / Catch-all (This handles ALL remaining buttons)
+# Premium Effects (True Pitch Shifting)
 @bot.callback_query_handler(func=lambda call: True)
 def apply_effect(call):
     chat_id = call.message.chat.id
-
     if call.data == 'back':
-        bot.answer_callback_query(call.id)
-        if chat_id in user_files and os.path.exists(user_files[chat_id]):
-            os.remove(user_files[chat_id])
-            del user_files[chat_id]
-        if chat_id in user_processing: 
-            del user_processing[chat_id]
-        if chat_id in user_temp_text:
-            del user_temp_text[chat_id]
-        
-        user_modes[chat_id] = None
         bot.delete_message(chat_id, call.message.message_id)
-        start_command(call.message) 
+        start_command(call.message)
         return
 
-    if user_processing.get(chat_id, False) == True:
-        bot.answer_callback_query(call.id, "✋ Ruko! Processing chal rahi hai...", show_alert=True)
-        return
-
-    if chat_id not in user_files or not os.path.exists(user_files[chat_id]):
-        bot.answer_callback_query(call.id, "❌ File expire ho gayi! /start dabao.", show_alert=True)
-        return
+    if user_processing.get(chat_id, False): return bot.answer_callback_query(call.id, "✋ Wait!", show_alert=True)
+    if chat_id not in user_files: return bot.answer_callback_query(call.id, "❌ File expire!", show_alert=True)
 
     user_processing[chat_id] = True
-    bot.answer_callback_query(call.id, "✨ Applying Magic...")
-    bot.send_chat_action(chat_id, 'record_audio')
-
+    bot.answer_callback_query(call.id, "✨ Applying Studio Effects...")
+    
     inp = user_files[chat_id]
     out = f"out_{chat_id}.wav"
 
     try:
-        data, rate = sf.read(inp)
+        # Load audio with Pedalboard
+        with AudioFile(inp) as f:
+            audio = f.read(f.frames)
+            samplerate = f.samplerate
+
+        board = Pedalboard([])
         eff = call.data
 
-        if eff == 'girl': sf.write(out, data, int(rate * 1.3))
-        elif eff == 'woman': sf.write(out, data, int(rate * 1.15))
-        elif eff == 'kid': sf.write(out, data, int(rate * 1.25))
-        elif eff == 'chipmunk': sf.write(out, data, int(rate * 1.5))
-        elif eff == 'monster': sf.write(out, data, int(rate * 0.6))
-        elif eff == 'giant': sf.write(out, data, int(rate * 0.4))
-        elif eff == 'ghost': sf.write(out, data[::-1], int(rate * 0.8)) 
-        elif eff == 'reverse': sf.write(out, data[::-1], int(rate * 1.2)) 
-        elif eff == 'robot':
-            if len(data.shape) > 1: sf.write(out, data[::2].repeat(2, axis=0), rate)
-            else: sf.write(out, data[::2].repeat(2), rate)
+        # 🎛️ TRUE PITCH SHIFTING (Speed remains constant!)
+        if eff == 'girl': board.append(PitchShift(semitones=4))
+        elif eff == 'woman': board.append(PitchShift(semitones=2))
+        elif eff == 'kid': board.append(PitchShift(semitones=7))
+        elif eff == 'monster': 
+            board.append(PitchShift(semitones=-6))
+            board.append(Distortion(drive_db=5))
+        elif eff == 'giant': 
+            board.append(PitchShift(semitones=-4))
+            board.append(Reverb(room_size=0.8, damping=0.9))
+        elif eff == 'alien':
+            board.append(PitchShift(semitones=3))
+            board.append(Chorus(rate_hz=2.0, depth=0.5))
+        elif eff == 'echo': board.append(Delay(delay_seconds=0.3, feedback=0.4))
+        elif eff == 'concert': board.append(Reverb(room_size=1.0, damping=0.1, wet_level=0.5))
         elif eff == 'radio':
-            noise = np.random.normal(0, 0.01, data.shape)
-            sf.write(out, data + noise, rate)
-        elif eff == 'alien': sf.write(out, data, int(rate * 1.8))
-        elif eff == 'echo':
-            delay = int(rate * 0.3)
-            padding = np.zeros((delay, data.shape[1])) if len(data.shape) > 1 else np.zeros(delay)
-            delayed = np.concatenate((padding, data))[:-delay]
-            sf.write(out, data + 0.6 * delayed, rate)
+            board.append(HighpassFilter(cutoff_frequency_hz=800))
+            board.append(LowpassFilter(cutoff_frequency_hz=2500))
+            board.append(Distortion(drive_db=8))
 
-        with open(out, 'rb') as audio:
-            bot.send_voice(chat_id, audio, caption=f"✨ Effect: {eff.upper()}")
+        # Apply magic!
+        effected = board(audio, samplerate)
+
+        with AudioFile(out, 'w', samplerate, effected.shape[0]) as f:
+            f.write(effected)
+
+        with open(out, 'rb') as final_audio:
+            bot.send_voice(chat_id, final_audio, caption=f"✨ Studio Effect: {eff.upper()}")
+        
         os.remove(out)
-
     except Exception as e:
         print(f"Effect Error: {e}")
         bot.answer_callback_query(call.id, "❌ Error creating effect!", show_alert=True)
-
     finally:
         user_processing[chat_id] = False
 
 if __name__ == "__main__":
     keep_alive()
-    while True:
-        try:
-            bot.infinity_polling(timeout=10, long_polling_timeout=5)
-        except Exception as e:
-            print(f"⚠️ Connection Lost: {e}")
-            time.sleep(5)
+    bot.infinity_polling()

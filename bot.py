@@ -18,7 +18,7 @@ except (TypeError, ValueError):
     print("⚠️ Warning: ADMIN_ID not set.")
     ADMIN_ID = 0
 
-CHANNEL_USERNAME = '@errorkid_05' 
+CHANNEL_USERNAME = '@errorkids' 
 DB_FILE = "users_db.txt"
 # ==========================================
 
